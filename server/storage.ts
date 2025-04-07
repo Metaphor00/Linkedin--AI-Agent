@@ -1,4 +1,6 @@
 import { posts, type Post, type InsertPost, users, type User, type InsertUser, postGenerations, type PostGeneration, type InsertPostGeneration } from "@shared/schema";
+import { db } from "./db";
+import { eq, desc } from "drizzle-orm";
 
 // Modify the interface with any CRUD methods you might need
 export interface IStorage {
@@ -19,120 +21,114 @@ export interface IStorage {
   getPostGenerations(postId: number): Promise<PostGeneration[]>;
 }
 
-export class MemStorage implements IStorage {
-  private users: Map<number, User>;
-  private postsData: Map<number, Post>;
-  private postGenerationsData: Map<number, PostGeneration>;
-  private userCurrentId: number;
-  private postCurrentId: number;
-  private postGenerationCurrentId: number;
-
-  constructor() {
-    this.users = new Map();
-    this.postsData = new Map();
-    this.postGenerationsData = new Map();
-    this.userCurrentId = 1;
-    this.postCurrentId = 1;
-    this.postGenerationCurrentId = 1;
-    
-    // Create a default user
-    this.createUser({
-      username: "demo",
-      password: "password",
-    });
-  }
-
+export class DatabaseStorage implements IStorage {
   // User operations
   async getUser(id: number): Promise<User | undefined> {
-    return this.users.get(id);
+    const [user] = await db.select().from(users).where(eq(users.id, id));
+    return user;
   }
 
   async getUserByUsername(username: string): Promise<User | undefined> {
-    return Array.from(this.users.values()).find(
-      (user) => user.username === username,
-    );
+    const [user] = await db.select().from(users).where(eq(users.username, username));
+    return user;
   }
 
   async createUser(insertUser: InsertUser): Promise<User> {
-    const id = this.userCurrentId++;
-    const user: User = { ...insertUser, id };
-    this.users.set(id, user);
+    const [user] = await db
+      .insert(users)
+      .values(insertUser)
+      .returning();
     return user;
   }
   
   // Post operations
   async createPost(insertPost: InsertPost): Promise<Post> {
-    const id = this.postCurrentId++;
-    const now = new Date();
-    
-    const post: Post = {
-      ...insertPost,
-      id,
-      createdAt: now.toISOString(),
-      updatedAt: now.toISOString(),
-    };
-    
-    this.postsData.set(id, post);
+    // Ensure we're passing an array to values if needed by Drizzle
+    const [post] = await db
+      .insert(posts)
+      .values(insertPost as any)
+      .returning();
     return post;
   }
   
   async getPost(id: number): Promise<Post | undefined> {
-    return this.postsData.get(id);
+    const [post] = await db.select().from(posts).where(eq(posts.id, id));
+    return post;
   }
   
   async getAllPosts(): Promise<Post[]> {
-    return Array.from(this.postsData.values())
-      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+    return db.select().from(posts).orderBy(desc(posts.createdAt));
   }
   
   async getScheduledPosts(): Promise<Post[]> {
-    return Array.from(this.postsData.values())
-      .filter(post => post.status === 'scheduled')
-      .sort((a, b) => {
-        if (a.scheduleDate && b.scheduleDate) {
-          return new Date(a.scheduleDate).getTime() - new Date(b.scheduleDate).getTime();
-        }
-        return 0;
-      });
+    return db
+      .select()
+      .from(posts)
+      .where(eq(posts.status, 'scheduled'))
+      .orderBy(posts.scheduleDate);
   }
   
   async updatePostStatus(id: number, status: string): Promise<Post> {
-    const post = this.postsData.get(id);
+    const now = new Date();
     
-    if (!post) {
+    const [updatedPost] = await db
+      .update(posts)
+      .set({ 
+        status, 
+        updatedAt: now,
+        ...(status === 'published' ? { publishedDate: now } : {})
+      })
+      .where(eq(posts.id, id))
+      .returning();
+    
+    if (!updatedPost) {
       throw new Error(`Post with ID ${id} not found`);
     }
     
-    const updatedPost: Post = {
-      ...post,
-      status,
-      updatedAt: new Date().toISOString(),
-    };
-    
-    this.postsData.set(id, updatedPost);
     return updatedPost;
   }
   
   // Post generation operations
   async createPostGeneration(insertGeneration: InsertPostGeneration): Promise<PostGeneration> {
-    const id = this.postGenerationCurrentId++;
-    const now = new Date();
+    const [generation] = await db
+      .insert(postGenerations)
+      .values(insertGeneration as any)
+      .returning();
     
-    const generation: PostGeneration = {
-      ...insertGeneration,
-      id,
-      createdAt: now.toISOString(),
-    };
-    
-    this.postGenerationsData.set(id, generation);
     return generation;
   }
   
   async getPostGenerations(postId: number): Promise<PostGeneration[]> {
-    return Array.from(this.postGenerationsData.values())
-      .filter(gen => gen.postId === postId)
-      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+    return db
+      .select()
+      .from(postGenerations)
+      .where(eq(postGenerations.postId, postId))
+      .orderBy(desc(postGenerations.createdAt));
   }
 }
 
-export const storage = new MemStorage();
+// Database storage instance
+export const storage = new DatabaseStorage();
+
+// Initialize the database with a default user
+export const initializeDatabase = async () => {
+  try {
+    // Check if default user exists
+    const existingUser = await storage.getUserByUsername("demo");
+    
+    // Create default user if not exists
+    if (!existingUser) {
+      await storage.createUser({
+        username: "demo",
+        password: "password",
+      });
+      console.log("Created default user 'demo'");
+    }
+    
+    return true;
+  } catch (error: unknown) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    console.error("Failed to initialize database:", errorMessage);
+    return false;
+  }
+};

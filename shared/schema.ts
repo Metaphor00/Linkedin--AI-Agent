@@ -1,4 +1,4 @@
-import { pgTable, text, serial, integer, boolean, timestamp, jsonb } from "drizzle-orm/pg-core";
+import { pgTable, text, serial, integer, boolean, timestamp, jsonb, primaryKey } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
@@ -11,6 +11,9 @@ export const users = pgTable("users", {
   linkedinRefreshToken: text("linkedin_refresh_token"),
   linkedinTokenExpiry: timestamp("linkedin_token_expiry"),
   writingStyleSamples: text("writing_style_samples"),
+  defaultTone: text("default_tone").default("professional"),
+  analyzePostsByDefault: boolean("analyze_posts_by_default").default(true),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 
 export const insertUserSchema = createInsertSchema(users).pick({
@@ -21,7 +24,7 @@ export const insertUserSchema = createInsertSchema(users).pick({
 // Post schema
 export const posts = pgTable("posts", {
   id: serial("id").primaryKey(),
-  userId: integer("user_id").notNull(),
+  userId: integer("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
   title: text("title").notNull(),
   content: text("content").notNull(),
   images: jsonb("images").$type<string[]>(),
@@ -46,9 +49,10 @@ export const insertPostSchema = createInsertSchema(posts).omit({
 // Post generation history schema
 export const postGenerations = pgTable("post_generations", {
   id: serial("id").primaryKey(),
-  postId: integer("post_id").notNull(),
+  postId: integer("post_id").notNull().references(() => posts.id, { onDelete: "cascade" }),
   generatedContent: text("generated_content").notNull(),
   aiPrompt: text("ai_prompt"),
+  hashtags: jsonb("hashtags").$type<string[]>(),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 
