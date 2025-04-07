@@ -193,6 +193,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.get('/api/linkedin/status', async (req, res) => {
     res.json({ connected: false });
   });
+  
+  // Add a health check endpoint for Render
+  app.get('/health', async (req, res) => {
+    res.status(200).json({ status: 'ok', environment: process.env.NODE_ENV });
+  });
 
   const httpServer = createServer(app);
   return httpServer;
